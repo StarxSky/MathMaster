@@ -136,7 +136,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
 
 在 macOS 上交叉构建 Windows 安装包通常需要安装 `wine`，Linux 目标也可能需要 Docker 或额外依赖。**最稳妥的做法是使用 GitHub Actions 在对应系统上分别构建**（`macos-latest` / `windows-latest` / `ubuntu-latest`）。
 
-仓库已附带 [`.github/workflows/build.yml`](.github/workflows/build.yml)：PR 会自动执行类型检查与构建；推送到 `main` / 手动触发时会在三大平台打包并上传产物；推送 `v*` 标签时会自动创建 GitHub Release 并附带安装包。
+仓库已附带 [`.github/workflows/build.yml`](.github/workflows/build.yml)：PR 会自动执行类型检查与构建；推送到 `main` / 手动触发时会在三大平台打包，并把安装包发布到名为 **Latest build** 的预发布 Release；推送 `v*` 标签时会创建正式 Release 并附带全部安装包。
 
 ### 5. 关于电子版教材与自定义图标
 
