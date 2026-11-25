@@ -143,7 +143,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
 - 本仓库**不提交任何 PDF / 教材资料**。如果本地存在 `library/`，或存在 `同济-上册/`、`同济-下册内容/` 这类私有资料目录，打包时会自动复制到应用的 `Resources/library/`（这些目录已被 `.gitignore` 忽略）；打包后的 App 启动时会从 `process.resourcesPath/library` 扫描 PDF，因此可以离线自带书库。
   如果不希望随包分发资料，删除 `electron-builder.config.cjs` 中对应的 `extraResources` 目录即可，用户仍可通过「打开本地 PDF」使用。
 - 应用图标位于 `build/icon.svg`（源文件）以及 `build/icon.png` / `icon.icns` / `icon.ico`（打包用）。替换图标后重新执行打包命令即可。
-- `electron-builder.config.cjs` 中的 `electronDist` 指向本地 `node_modules/electron/dist`，可直接复用已安装的 Electron，避免打包时重复下载。若需交叉编译到其他平台或指定自定义 Electron 版本，删除该配置项，或设置 `ELECTRON_MIRROR` 使用国内镜像。
+- 如果本地存在 `node_modules/electron/dist`，打包时会直接复用已安装的 Electron，避免重复下载；在 CI 或未安装本地 Electron 的环境中会自动回退为 electron-builder 下载。若需交叉编译到其他平台，可删除本地 Electron 目录或设置 `ELECTRON_MIRROR` 使用镜像。
 
 ## 🗂️ 项目结构
 

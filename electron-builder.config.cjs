@@ -3,6 +3,9 @@ const path = require("node:path");
 
 const extraResources = [];
 
+const localElectronDist = path.resolve(__dirname, "node_modules/electron/dist");
+const hasLocalElectron = fs.existsSync(localElectronDist);
+
 for (const dir of ["同济-上册", "同济-下册内容", "library"]) {
   if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
     extraResources.push({
@@ -23,7 +26,7 @@ module.exports = {
   },
   files: ["dist/**/*", "package.json"],
   asar: true,
-  electronDist: path.resolve(__dirname, "node_modules/electron/dist"),
+  ...(hasLocalElectron ? { electronDist: localElectronDist } : {}),
   extraResources,
   mac: {
     target: ["dmg", "zip"],
