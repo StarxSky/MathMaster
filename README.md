@@ -124,6 +124,9 @@ release/MathMaster-1.0.0-arm64-mac.zip
 # 方式一：右键 App → 打开
 # 方式二：移除隔离属性
 xattr -cr /Applications/MathMaster.app
+
+# 再签名
+codesign --force --deep --sign - /Applications/MathMaster.app
 ```
 
 如需公开分发，建议配置 Apple Developer ID 进行签名与公证（在 CI 中设置 `CSC_LINK`、`CSC_KEY_PASSWORD`，或使用 `@electron/notarize`）。本地无证书构建时可关闭签名探测：
