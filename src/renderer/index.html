@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' app: data: blob:; script-src 'self' app: 'unsafe-inline'; style-src 'self' app: 'unsafe-inline'; img-src 'self' app: data: blob:; font-src 'self' app: data:; connect-src 'self' app: data: blob:; worker-src 'self' app: blob:; frame-src https: http:; child-src https: http:; object-src 'none';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MathMaster</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="theme-dark">
+    <div id="bg-layer"><div id="bg-image"></div></div>
+
+    <div class="app">
+      <header class="topbar" id="topbar">
+        <div class="topbar-left">
+          <button id="btnTheme" class="icon-btn" title="切换主题"></button>
+          <div class="divider"></div>
+          <button id="btnToc" class="icon-btn" title="目录侧栏 (⌘B)"></button>
+          <button id="btnChat" class="icon-btn" title="AI 助手 (⌘J)"></button>
+          <div class="divider"></div>
+          <button id="btnLibrary" class="pill-btn"></button>
+          <button id="btnOpen" class="pill-btn"></button>
+        </div>
+        <div class="topbar-center">
+          <span id="docTitle" class="doc-title">MathMaster</span>
+        </div>
+        <div class="topbar-right">
+          <button id="btnWarm" class="icon-btn" title="护眼暖色"></button>
+          <button id="btnSettings" class="icon-btn" title="设置 (⌘,)"></button>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace">
+        <aside class="panel chat-panel" id="chatPanel">
+          <div class="panel-head">
+            <div class="panel-title">
+              <span class="ico">🤖</span><span>AI 助手</span>
+            </div>
+            <div class="panel-actions">
+              <select id="chatProvider" class="chat-select" title="选择聊天服务">
+                <option value="deepseek">DeepSeek</option>
+                <option value="chatgpt">ChatGPT</option>
+                <option value="custom">自定义</option>
+              </select>
+              <button id="btnChatReload" class="mini-btn" title="刷新"></button>
+              <button id="btnChatExternal" class="mini-btn" title="在浏览器打开"></button>
+              <button id="btnChatPin" class="mini-btn" title="固定/悬浮"></button>
+              <button id="btnChatClose" class="mini-btn" title="隐藏"></button>
+            </div>
+          </div>
+          <div class="panel-body chat-body">
+            <webview
+              id="chatWebview"
+              partition="persist:chat"
+              allowpopups
+            ></webview>
+            <div class="chat-hint hidden" id="chatHint"></div>
+          </div>
+          <div class="resizer" id="resizeChat" data-resize="chat"></div>
+        </aside>
+
+        <aside class="panel toc-panel" id="tocPanel">
+          <div class="panel-head">
+            <div class="panel-title">
+              <span class="ico">📑</span><span>导航</span>
+            </div>
+            <div class="panel-actions">
+              <button id="btnTocPin" class="mini-btn" title="固定/悬浮"></button>
+              <button id="btnTocClose" class="mini-btn" title="隐藏"></button>
+            </div>
+          </div>
+          <div class="sidebar-tabs">
+            <button class="sidebar-tab active" data-tab="toc">目录</button>
+            <button class="sidebar-tab" data-tab="marks">书签</button>
+          </div>
+          <div class="sidebar-search">
+            <span class="search-ico" id="searchIco"></span>
+            <input id="tocFilter" placeholder="筛选目录…" />
+          </div>
+          <div class="panel-body toc-body" id="tocBody">
+            <div id="tocContent" class="toc-content"></div>
+            <div id="marksContent" class="marks-content hidden"></div>
+          </div>
+          <div class="resizer" id="resizeToc" data-resize="toc"></div>
+        </aside>
+
+        <section class="viewer-shell" id="viewerShell">
+          <div class="viewer-toolbar">
+            <div class="vt-left">
+              <button id="btnPrevPage" class="mini-btn" title="上一页"></button>
+              <div class="page-input-wrap">
+                <input id="pageInput" class="page-input" type="text" inputmode="numeric" />
+                <span class="page-total">/ <span id="pageTotal">0</span></span>
+              </div>
+              <button id="btnNextPage" class="mini-btn" title="下一页"></button>
+            </div>
+            <div class="vt-center" id="vtDocTitle"></div>
+            <div class="vt-right">
+              <button id="btnBookmark" class="mini-btn" title="添加书签"></button>
+              <div class="divider"></div>
+              <button id="btnZoomOut" class="mini-btn" title="缩小"></button>
+              <span id="zoomLabel" class="zoom-label">100%</span>
+              <button id="btnZoomIn" class="mini-btn" title="放大"></button>
+              <button id="btnFit" class="mini-btn" title="适应宽度"></button>
+            </div>
+          </div>
+
+          <div class="viewer-frame">
+            <div class="viewer" id="viewer">
+              <div class="pages" id="pages"></div>
+            </div>
+            <div class="warm-overlay"></div>
+            <div class="viewer-empty" id="emptyState">
+              <div class="empty-logo" id="emptyLogo"></div>
+              <h2>开始你的数学之旅</h2>
+              <p>从书库中选择一本 PDF，或打开本地文件。</p>
+              <div class="empty-actions">
+                <button id="btnEmptyLibrary" class="primary-btn"></button>
+                <button id="btnEmptyOpen" class="ghost-btn"></button>
+              </div>
+            </div>
+            <div class="viewer-loading hidden" id="viewerLoading">
+              <div class="spinner"></div>
+              <span>正在加载 PDF…</span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="taskbar" id="taskbar">
+        <button id="btnNewTab" class="task-new" title="打开书库 (＋)"></button>
+        <div class="tabs" id="tabs"></div>
+        <div class="task-right">
+          <span id="taskStatus" class="task-status">尚未打开文档</span>
+        </div>
+      </footer>
+    </div>
+
+    <div class="modal-root" id="modalRoot"></div>
+    <div class="toast" id="toast"></div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

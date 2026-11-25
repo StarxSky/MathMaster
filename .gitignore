@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+release/
+
+# private study materials / local library (never commit)
+/同济-上册/
+/同济-下册内容/
+/library/
+
+# environment & local config
+.env
+.env.*
+*.local
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# logs
+*.log
+npm-debug.log*
+
+# generated icon assets (keep the source & packaged icons)
+build/icon.iconset/

@@ -1,0 +1,31 @@
+{
+  "name": "mathmaster",
+  "productName": "MathMaster",
+  "version": "1.0.0",
+  "description": "面向数学学习与考研复习的本地 PDF 阅读器：目录导航、书签续读、AI 侧栏、护眼暖色、多标签、自定义背景。",
+  "author": "MathMaster contributors <mathmaster@users.noreply.github.com>",
+  "license": "MIT",
+  "main": "dist/main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc --noEmit",
+    "pack": "npm run build && electron-builder --dir --config electron-builder.config.cjs",
+    "dist": "npm run build && electron-builder --config electron-builder.config.cjs",
+    "dist:mac": "npm run build && electron-builder --mac --config electron-builder.config.cjs",
+    "dist:win": "npm run build && electron-builder --win --config electron-builder.config.cjs",
+    "dist:linux": "npm run build && electron-builder --linux --config electron-builder.config.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.7",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.0.0",
+    "esbuild": "^0.28.2",
+    "pdfjs-dist": "6.5.438",
+    "typescript": "^5.9.0"
+  }
+}
