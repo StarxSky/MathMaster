@@ -148,6 +148,7 @@ export class App {
     $("btnZoomOut").innerHTML = icon("zoomOut");
     $("btnZoomIn").innerHTML = icon("zoomIn");
     $("btnFit").innerHTML = icon("fitWidth");
+    $("btnRotate").innerHTML = icon("rotate");
     $("btnBookmark").innerHTML = icon("bookmark");
     $("btnNewTab").innerHTML = icon("plus");
     $("btnEmptyLibrary").innerHTML = `${icon("book")}<span>打开书库</span>`;
@@ -625,6 +626,7 @@ export class App {
       this.viewer.fitWidth();
       this.updateZoomLabel();
     });
+    $("btnRotate").addEventListener("click", () => this.rotateCurrentPage());
     this.bookmarkBtn.addEventListener("click", () => this.toggleBookmark());
     $("btnEmptyLibrary").addEventListener("click", () => this.openLibrary());
     $("btnEmptyOpen").addEventListener("click", () => this.openFromDialog());
@@ -632,6 +634,13 @@ export class App {
 
   private updateZoomLabel() {
     this.zoomLabel.textContent = `${this.viewer.getZoomPercent()}%`;
+  }
+
+  private rotateCurrentPage() {
+    if (this.viewer.getNumPages() === 0) return;
+    const page = this.viewer.getCurrentPage();
+    const angle = this.viewer.rotatePage(page);
+    this.toast(`第 ${page} 页已旋转 ${angle}°`);
   }
 
   private showLoading() {
@@ -1436,6 +1445,8 @@ export class App {
         } else if (e.key === "0") {
           this.viewer.fitWidth();
           this.updateZoomLabel();
+        } else if (e.key.toLowerCase() === "r") {
+          this.rotateCurrentPage();
         }
       }
     });

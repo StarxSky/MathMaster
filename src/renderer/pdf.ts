@@ -36,6 +36,7 @@ export class PdfViewer {
   private pdf: PDFDocumentProxy | null = null;
   private loadingTask: PDFDocumentLoadingTask | null = null;
   private sizes: { w: number; h: number }[] = [];
+  private rotations = new Map<number, number>();
   private tops: number[] = [];
   private els: HTMLElement[] = [];
   private rendered = new Set<number>();
@@ -190,7 +191,10 @@ export class PdfViewer {
       el.querySelector(".page-canvas-wrap")?.remove();
     }
 
-    const maxW = this.sizes.reduce((m, s) => Math.max(m, s.w), 1);
+    let maxW = 1;
+    for (let i = 0; i < this.sizes.length; i++) {
+      maxW = Math.max(maxW, this.dimsFor(i).w);
+    }
     const available = Math.max(120, this.scrollEl.clientWidth - PAD * 2);
     const fit = available / maxW;
     this.scale = Math.max(0.05, fit * this.zoom);
@@ -198,7 +202,7 @@ export class PdfViewer {
     let cursor = PAD;
     this.tops = new Array(this.els.length);
     for (let i = 0; i < this.sizes.length; i++) {
-      const size = this.sizes[i];
+      const size = this.dimsFor(i);
       const w = size.w * this.scale;
       const h = size.h * this.scale;
       const el = this.els[i];
@@ -293,7 +297,8 @@ export class PdfViewer {
     try {
       const page = await this.pdf.getPage(i + 1);
       if (token !== this.token) return;
-      const viewport = page.getViewport({ scale: this.scale });
+      const rotation = (page.rotate + this.rotationDelta(i)) % 360;
+      const viewport = page.getViewport({ scale: this.scale, rotation });
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
@@ -380,6 +385,30 @@ export class PdfViewer {
     return Math.round(this.zoom * 100);
   }
 
+  private rotationDelta(i: number): number {
+    return this.rotations.get(i) ?? 0;
+  }
+
+  private dimsFor(i: number): { w: number; h: number } {
+    const size = this.sizes[i] ?? { w: 1, h: 1 };
+    return this.rotationDelta(i) % 180 === 0
+      ? size
+      : { w: size.h, h: size.w };
+  }
+
+  rotatePage(page = this.current): number {
+    if (!this.pdf) return 0;
+    const i = Math.min(Math.max(1, page), this.total) - 1;
+    const delta = (this.rotationDelta(i) + 90) % 360;
+    this.rotations.set(i, delta);
+    this.relayout(true);
+    return delta;
+  }
+
+  getPageRotation(page = this.current): number {
+    return this.rotationDelta(Math.min(Math.max(1, page), this.total) - 1);
+  }
+
   private reset() {
     this.token++;
     this.cancelRenders();
@@ -394,6 +423,7 @@ export class PdfViewer {
     this.els = [];
     this.tops = [];
     this.sizes = [];
+    this.rotations.clear();
     this.total = 0;
     this.current = 1;
     this.zoom = 1;
