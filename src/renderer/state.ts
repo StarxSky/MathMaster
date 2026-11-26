@@ -16,6 +16,11 @@ export interface Settings {
   bgImageOpacity: number;
   surfaceOpacity: number;
   blur: boolean;
+  dataDir: string;
+  deepseek: {
+    apiKey: string;
+    model: string;
+  };
   chat: {
     provider: ChatProvider;
     customUrl: string;
@@ -59,6 +64,11 @@ export const DEFAULTS: Settings = {
   bgImageOpacity: 100,
   surfaceOpacity: 90,
   blur: true,
+  dataDir: "",
+  deepseek: {
+    apiKey: "",
+    model: "deepseek-chat",
+  },
   chat: {
     provider: "deepseek",
     customUrl: "",
@@ -94,6 +104,7 @@ export function loadSettings(): Settings {
   return {
     ...DEFAULTS,
     ...stored,
+    deepseek: { ...DEFAULTS.deepseek, ...(stored.deepseek ?? {}) },
     chat: { ...DEFAULTS.chat, ...(stored.chat ?? {}) },
     panels: {
       chat: { ...DEFAULTS.panels.chat, ...(stored.panels?.chat ?? {}) },

@@ -75,6 +75,7 @@
           <div class="sidebar-tabs">
             <button class="sidebar-tab active" data-tab="toc">目录</button>
             <button class="sidebar-tab" data-tab="marks">书签</button>
+            <button class="sidebar-tab" data-tab="ann">批注</button>
           </div>
           <div class="sidebar-search">
             <span class="search-ico" id="searchIco"></span>
@@ -83,6 +84,7 @@
           <div class="panel-body toc-body" id="tocBody">
             <div id="tocContent" class="toc-content"></div>
             <div id="marksContent" class="marks-content hidden"></div>
+            <div id="annContent" class="ann-content hidden"></div>
           </div>
           <div class="resizer" id="resizeToc" data-resize="toc"></div>
         </aside>
@@ -100,6 +102,7 @@
             <div class="vt-center" id="vtDocTitle"></div>
             <div class="vt-right">
               <button id="btnBookmark" class="mini-btn" title="添加书签"></button>
+              <button id="btnAnnotate" class="mini-btn" title="批注模式 (A)"></button>
               <div class="divider"></div>
               <button id="btnZoomOut" class="mini-btn" title="缩小"></button>
               <span id="zoomLabel" class="zoom-label">100%</span>

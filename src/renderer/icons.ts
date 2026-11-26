@@ -40,6 +40,8 @@ const P: Record<string, string> = {
     '<path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M7 12h10"/>',
   rotate:
     '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+  highlighter:
+    '<path d="M9 11l-5 5v4h4l5-5"/><path d="M9 11l5.5-5.5a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L13 15"/><path d="M4 20h16"/>',
   image:
     '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
   trash:

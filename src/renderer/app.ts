@@ -1,4 +1,4 @@
-import type { PdfEntry } from "../shared/api";
+import type { Annotation, PdfEntry } from "../shared/api";
 import { PdfViewer, type LoadedInfo, type OutlineNode } from "./pdf";
 import { icon } from "./icons";
 import {
@@ -42,6 +42,42 @@ const folderHue = (folder: string): number => {
 const baseName = (p: string) =>
   (p.split(/[\\/]/).pop() || "document").replace(/\.pdf$/i, "");
 
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const rotateRect = (r: Rect, turns: number): Rect => {
+  const t = ((turns % 4) + 4) % 4;
+  if (t === 0) return r;
+  if (t === 1) return { x: 1 - (r.y + r.h), y: r.x, w: r.h, h: r.w };
+  if (t === 2)
+    return { x: 1 - (r.x + r.w), y: 1 - (r.y + r.h), w: r.w, h: r.h };
+  return { x: r.y, y: 1 - (r.x + r.w), w: r.h, h: r.w };
+};
+
+const colorWithAlpha = (hex: string, alpha: number): string => {
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return `rgba(255, 213, 74, ${alpha})`;
+  let value = match[1];
+  if (value.length === 3) {
+    value = value
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const n = parseInt(value, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const makeId = (): string =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 const CHAT_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
@@ -66,6 +102,11 @@ export class App {
   private toastTimer = 0;
   private modalClose: (() => void) | null = null;
   private viewer!: PdfViewer;
+  private annotations: Annotation[] = [];
+  private annLoadedFor: string | null = null;
+  private annMode = false;
+  private annSaveTimer = 0;
+  private lastSummary = "";
 
   private pagesEl = $("pages");
   private viewerEl = $("viewer");
@@ -82,6 +123,7 @@ export class App {
   private tabsEl = $("tabs");
   private tocContent = $("tocContent");
   private marksContent = $("marksContent");
+  private annContent = $("annContent");
   private tocBody = $("tocBody");
   private tocFilterInput = $<HTMLInputElement>("tocFilter");
   private chatPanel = $("chatPanel");
@@ -125,6 +167,12 @@ export class App {
       saveSettings(this.settings);
     });
 
+    void window.api
+      .ensureDataDir(this.settings.dataDir)
+      .catch((err) =>
+        console.error("[MathMaster] failed to create data directory", err)
+      );
+
     await this.loadBackground();
     await this.boot();
   }
@@ -150,6 +198,7 @@ export class App {
     $("btnFit").innerHTML = icon("fitWidth");
     $("btnRotate").innerHTML = icon("rotate");
     $("btnBookmark").innerHTML = icon("bookmark");
+    $("btnAnnotate").innerHTML = icon("highlighter");
     $("btnNewTab").innerHTML = icon("plus");
     $("btnEmptyLibrary").innerHTML = `${icon("book")}<span>打开书库</span>`;
     $("btnEmptyOpen").innerHTML = `${icon("folderOpen")}<span>打开本地 PDF</span>`;
@@ -320,13 +369,17 @@ export class App {
 
   private bindSidebar() {
     const tabs = this.tocPanel.querySelectorAll<HTMLElement>(".sidebar-tab");
+    const search = this.tocPanel.querySelector<HTMLElement>(".sidebar-search");
     tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
         const name = tab.dataset.tab ?? "toc";
         tabs.forEach((t) => t.classList.toggle("active", t === tab));
         this.tocContent.classList.toggle("hidden", name !== "toc");
         this.marksContent.classList.toggle("hidden", name !== "marks");
+        this.annContent.classList.toggle("hidden", name !== "ann");
+        search?.classList.toggle("hidden", name !== "toc");
         if (name === "marks") this.renderMarks();
+        if (name === "ann") this.renderAnnList();
       });
     });
 
@@ -627,6 +680,8 @@ export class App {
       this.updateZoomLabel();
     });
     $("btnRotate").addEventListener("click", () => this.rotateCurrentPage());
+    $("btnAnnotate").addEventListener("click", () => this.toggleAnnotationMode());
+    this.bindAnnotationDrawing();
     this.bookmarkBtn.addEventListener("click", () => this.toggleBookmark());
     $("btnEmptyLibrary").addEventListener("click", () => this.openLibrary());
     $("btnEmptyOpen").addEventListener("click", () => this.openFromDialog());
@@ -640,6 +695,7 @@ export class App {
     if (this.viewer.getNumPages() === 0) return;
     const page = this.viewer.getCurrentPage();
     const angle = this.viewer.rotatePage(page);
+    this.renderAnnotations();
     this.toast(`第 ${page} 页已旋转 ${angle}°`);
   }
 
@@ -707,6 +763,597 @@ export class App {
   private commitDocs() {
     window.clearTimeout(this.docsTimer);
     saveDocs(this.docs);
+  }
+
+  // ---------------- annotations ----------------
+
+  private toggleAnnotationMode() {
+    if (this.viewer.getNumPages() === 0) {
+      this.toast("请先打开一个 PDF");
+      return;
+    }
+    this.annMode = !this.annMode;
+    this.updateAnnotationModeUI();
+    this.renderAnnList();
+    this.toast(
+      this.annMode
+        ? "批注模式：在页面上按住并拖动以框选区域"
+        : "已退出批注模式"
+    );
+  }
+
+  private updateAnnotationModeUI() {
+    const btn = $("btnAnnotate");
+    btn.classList.toggle("active", this.annMode);
+    btn.title = this.annMode ? "退出批注模式 (A)" : "批注模式 (A)";
+    this.pagesEl.classList.toggle("annotating", this.annMode);
+  }
+
+  private bindAnnotationDrawing() {
+    this.pagesEl.addEventListener("pointerdown", (e) => {
+      if (!this.annMode || e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest(".annotation-mark")) return;
+      const pageEl = target.closest<HTMLElement>(".page");
+      if (!pageEl) return;
+      const pageNo = Number(pageEl.dataset.page);
+      if (!pageNo) return;
+
+      e.preventDefault();
+      const box = pageEl.getBoundingClientRect();
+      const startX = clamp(e.clientX - box.left, 0, box.width);
+      const startY = clamp(e.clientY - box.top, 0, box.height);
+      const draft = document.createElement("div");
+      draft.className = "annotation-draft";
+      pageEl.append(draft);
+      let final: Rect | null = null;
+
+      const update = (ev: PointerEvent) => {
+        const cx = clamp(ev.clientX - box.left, 0, box.width);
+        const cy = clamp(ev.clientY - box.top, 0, box.height);
+        const x = Math.min(startX, cx);
+        const y = Math.min(startY, cy);
+        const w = Math.abs(cx - startX);
+        const h = Math.abs(cy - startY);
+        final = { x, y, w, h };
+        draft.style.left = `${x}px`;
+        draft.style.top = `${y}px`;
+        draft.style.width = `${w}px`;
+        draft.style.height = `${h}px`;
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", update);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", cancel);
+      };
+      const cancel = () => {
+        cleanup();
+        draft.remove();
+      };
+      const finish = (ev: PointerEvent) => {
+        update(ev);
+        cleanup();
+        draft.remove();
+        if (!final || final.w < 8 || final.h < 8) {
+          this.toast("请在页面上按住并拖动以框选批注区域");
+          return;
+        }
+        const display: Rect = {
+          x: final.x / box.width,
+          y: final.y / box.height,
+          w: final.w / box.width,
+          h: final.h / box.height,
+        };
+        const turns = Math.round(this.viewer.getPageRotation(pageNo) / 90);
+        const base = rotateRect(display, (4 - turns) % 4);
+        const now = Date.now();
+        this.openAnnotationEditor(
+          {
+            id: makeId(),
+            page: pageNo,
+            x: base.x,
+            y: base.y,
+            w: base.w,
+            h: base.h,
+            note: "",
+            color: "#ffd54a",
+            createdAt: now,
+            updatedAt: now,
+          },
+          true
+        );
+      };
+
+      update(e);
+      window.addEventListener("pointermove", update);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", cancel);
+    });
+  }
+
+  private openAnnotationEditor(annotation: Annotation, isNew: boolean) {
+    const content = document.createElement("div");
+    content.className = "modal-inner ann-editor";
+
+    const head = document.createElement("div");
+    head.className = "modal-head";
+    const title = document.createElement("h3");
+    title.textContent = isNew ? "添加批注" : "编辑批注";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "mini-btn";
+    closeBtn.innerHTML = icon("x");
+    head.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "modal-body";
+    const label = document.createElement("label");
+    label.className = "prompt-label";
+    label.textContent = `第 ${annotation.page} 页 · 批注内容（可选）`;
+    const textarea = document.createElement("textarea");
+    textarea.className = "ann-textarea";
+    textarea.placeholder = "写下你的理解、疑问、公式或易错点…";
+    textarea.value = annotation.note;
+
+    const colorRow = document.createElement("div");
+    colorRow.className = "field ann-color-row";
+    const colorLabel = document.createElement("span");
+    colorLabel.textContent = "标记颜色";
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.value = /^#[0-9a-f]{6}$/i.test(annotation.color)
+      ? annotation.color
+      : "#ffd54a";
+    colorRow.append(colorLabel, colorInput);
+    body.append(label, textarea, colorRow);
+
+    const foot = document.createElement("div");
+    foot.className = "modal-foot";
+    const left = document.createElement("div");
+    left.className = "modal-actions";
+    const right = document.createElement("div");
+    right.className = "modal-actions";
+    foot.append(left, right);
+
+    let close: () => void = () => {};
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "ghost-btn";
+    cancelBtn.textContent = "取消";
+    cancelBtn.addEventListener("click", () => close());
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "primary-btn";
+    saveBtn.textContent = isNew ? "保存批注" : "保存修改";
+    saveBtn.addEventListener("click", () => {
+      const note = textarea.value.trim();
+      const color = colorInput.value || "#ffd54a";
+      const now = Date.now();
+      if (isNew) {
+        this.annotations.push({
+          ...annotation,
+          note,
+          color,
+          updatedAt: now,
+        });
+      } else {
+        const idx = this.annotations.findIndex((a) => a.id === annotation.id);
+        if (idx >= 0) {
+          this.annotations[idx] = {
+            ...this.annotations[idx],
+            note,
+            color,
+            updatedAt: now,
+          };
+        }
+      }
+      this.scheduleAnnotationsSave();
+      this.renderAnnotations();
+      this.renderAnnList();
+      this.toast(isNew ? "已添加批注" : "批注已更新");
+      close();
+    });
+
+    if (!isNew) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "ghost-btn danger";
+      deleteBtn.textContent = "删除批注";
+      deleteBtn.addEventListener("click", () => {
+        this.annotations = this.annotations.filter(
+          (a) => a.id !== annotation.id
+        );
+        this.scheduleAnnotationsSave();
+        this.renderAnnotations();
+        this.renderAnnList();
+        this.toast("已删除批注");
+        close();
+      });
+      left.append(deleteBtn);
+    }
+
+    right.append(cancelBtn, saveBtn);
+    content.append(head, body, foot);
+    close = this.openModal(content);
+    closeBtn.addEventListener("click", () => close());
+    setTimeout(() => textarea.focus(), 30);
+  }
+
+  private sortedAnnotations(): Annotation[] {
+    return this.annotations
+      .slice()
+      .sort(
+        (a, b) =>
+          a.page - b.page ||
+          a.y - b.y ||
+          a.x - b.x ||
+          a.createdAt - b.createdAt
+      );
+  }
+
+  private renderAnnotations() {
+    this.pagesEl
+      .querySelectorAll(".annotation-layer")
+      .forEach((el) => el.remove());
+    if (this.annotations.length === 0) return;
+
+    const groups = new Map<number, Annotation[]>();
+    for (const a of this.annotations) {
+      const list = groups.get(a.page) ?? [];
+      list.push(a);
+      groups.set(a.page, list);
+    }
+
+    for (const [page, list] of groups) {
+      const pageEl = this.pagesEl.querySelector<HTMLElement>(
+        `.page[data-page="${page}"]`
+      );
+      if (!pageEl) continue;
+      const layer = document.createElement("div");
+      layer.className = "annotation-layer";
+      const turns = Math.round(this.viewer.getPageRotation(page) / 90);
+      for (const a of list) {
+        const r = rotateRect({ x: a.x, y: a.y, w: a.w, h: a.h }, turns);
+        const mark = document.createElement("button");
+        mark.type = "button";
+        mark.className = "annotation-mark";
+        mark.dataset.id = a.id;
+        mark.style.left = `${clamp(r.x, 0, 1) * 100}%`;
+        mark.style.top = `${clamp(r.y, 0, 1) * 100}%`;
+        mark.style.width = `${clamp(r.w, 0, 1) * 100}%`;
+        mark.style.height = `${clamp(r.h, 0, 1) * 100}%`;
+        mark.style.backgroundColor = colorWithAlpha(a.color, 0.3);
+        mark.style.borderColor = colorWithAlpha(a.color, 0.9);
+        mark.title = a.note.trim() || `第 ${a.page} 页批注`;
+        if (a.note.trim()) {
+          mark.classList.add("has-note");
+          const dot = document.createElement("span");
+          dot.className = "annotation-note-dot";
+          dot.style.background = a.color;
+          mark.append(dot);
+        }
+        mark.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.openAnnotationEditor({ ...a }, false);
+        });
+        layer.append(mark);
+      }
+      pageEl.append(layer);
+    }
+  }
+
+  private renderAnnList() {
+    this.annContent.replaceChildren();
+    const path = this.activePath;
+    if (!path) {
+      this.annContent.append(this.hint("打开文档后可添加批注"));
+      return;
+    }
+
+    const head = document.createElement("div");
+    head.className = "ann-head";
+    const title = document.createElement("span");
+    title.className = "ann-title";
+    title.innerHTML = `${icon("highlighter")}<span>批注 · ${this.annotations.length}</span>`;
+
+    const actions = document.createElement("div");
+    actions.className = "ann-actions";
+
+    const modeBtn = document.createElement("button");
+    modeBtn.className = "mini-btn";
+    modeBtn.classList.toggle("active", this.annMode);
+    modeBtn.innerHTML = icon("highlighter");
+    modeBtn.title = this.annMode ? "退出批注模式" : "开启批注模式";
+    modeBtn.addEventListener("click", () => this.toggleAnnotationMode());
+
+    const aiBtn = document.createElement("button");
+    aiBtn.className = "mini-btn";
+    aiBtn.innerHTML = icon("sparkles");
+    aiBtn.title = "用 DeepSeek 总结批注";
+    aiBtn.disabled = this.annotations.length === 0;
+    aiBtn.addEventListener("click", () => void this.summarizeAnnotations());
+
+    const pdfBtn = document.createElement("button");
+    pdfBtn.className = "mini-btn";
+    pdfBtn.innerHTML = icon("file");
+    pdfBtn.title = "导出批注总结 PDF";
+    pdfBtn.disabled = this.annotations.length === 0;
+    pdfBtn.addEventListener("click", () => void this.exportSummary());
+
+    actions.append(modeBtn, aiBtn, pdfBtn);
+    head.append(title, actions);
+    this.annContent.append(head);
+
+    if (this.annotations.length === 0) {
+      this.annContent.append(
+        this.hint("点击上方高亮按钮，在页面上按住并拖动框选区域即可添加批注。")
+      );
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "ann-list";
+    for (const a of this.sortedAnnotations()) {
+      const row = document.createElement("div");
+      row.className = "ann-row";
+      if (a.page === this.viewer.getCurrentPage()) row.classList.add("current");
+
+      const main = document.createElement("button");
+      main.className = "ann-main";
+      const swatch = document.createElement("span");
+      swatch.className = "ann-swatch";
+      swatch.style.background = a.color;
+      const page = document.createElement("span");
+      page.className = "ann-page";
+      page.textContent = `P${a.page}`;
+      const note = document.createElement("span");
+      note.className = "ann-note";
+      note.textContent = a.note.trim() || "标记区域";
+      main.append(swatch, page, note);
+      main.title = a.note.trim() || `第 ${a.page} 页标记区域`;
+      main.addEventListener("click", () => this.viewer.goToPage(a.page));
+
+      const del = document.createElement("button");
+      del.className = "mini-btn ann-del";
+      del.innerHTML = icon("trash");
+      del.title = "删除批注";
+      del.addEventListener("click", () => {
+        this.annotations = this.annotations.filter((x) => x.id !== a.id);
+        this.scheduleAnnotationsSave();
+        this.renderAnnotations();
+        this.renderAnnList();
+        this.toast("已删除批注");
+      });
+
+      row.append(main, del);
+      list.append(row);
+    }
+    this.annContent.append(list);
+  }
+
+  private annotationLines(): string {
+    return this.sortedAnnotations()
+      .map(
+        (a, i) =>
+          `${i + 1}. 第 ${a.page} 页：${
+            a.note.trim() || "（仅标记区域，无文字笔记）"
+          }`
+      )
+      .join("\n");
+  }
+
+  private async summarizeAnnotations() {
+    const path = this.activePath;
+    if (!path) return;
+    if (this.annotations.length === 0) {
+      this.toast("暂无批注可总结");
+      return;
+    }
+    const apiKey = this.settings.deepseek.apiKey.trim();
+    if (!apiKey) {
+      this.toast("请先在设置中填写 DeepSeek API Key");
+      this.openSettings();
+      return;
+    }
+
+    const loading = document.createElement("div");
+    loading.className = "modal-inner";
+    loading.innerHTML = `
+      <div class="modal-head"><h3>AI 知识总结</h3></div>
+      <div class="modal-body ann-loading">
+        <div class="spinner"></div>
+        <span>正在请求 DeepSeek 生成知识总结…</span>
+      </div>
+    `;
+    const closeLoading = this.openModal(loading);
+
+    const title = this.docTitle.textContent?.trim() || baseName(path);
+    const result = await window.api.aiSummarize({
+      apiKey,
+      model: this.settings.deepseek.model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是一位严谨的数学学习助手。请根据用户提供的 PDF 批注进行知识归纳整理。要求：按知识点分节，提炼核心概念、定义、定理、公式与解题方法，指出常见易错点，并在最后给出复习建议。使用 Markdown 输出，条理清晰、便于复习。",
+        },
+        {
+          role: "user",
+          content: `文档：${title}\n\n批注：\n${this.annotationLines()}`,
+        },
+      ],
+    });
+    closeLoading();
+
+    if (!result.ok || !result.content) {
+      this.toast(result.error || "AI 总结失败");
+      return;
+    }
+    this.lastSummary = result.content;
+    this.openSummaryModal(result.content);
+  }
+
+  private openSummaryModal(summary: string) {
+    const content = document.createElement("div");
+    content.className = "modal-inner summary-modal";
+
+    const head = document.createElement("div");
+    head.className = "modal-head";
+    const title = document.createElement("h3");
+    title.textContent = "AI 知识总结";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "mini-btn";
+    closeBtn.innerHTML = icon("x");
+    head.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "modal-body";
+    const pre = document.createElement("pre");
+    pre.className = "summary-text";
+    pre.textContent = summary;
+    body.append(pre);
+
+    const foot = document.createElement("div");
+    foot.className = "modal-foot";
+    const tip = document.createElement("span");
+    tip.className = "foot-tip";
+    tip.textContent = `基于 ${this.annotations.length} 条批注生成`;
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "ghost-btn";
+    copyBtn.textContent = "复制";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(summary);
+        this.toast("已复制到剪贴板");
+      } catch {
+        this.toast("复制失败");
+      }
+    });
+
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "primary-btn";
+    exportBtn.innerHTML = `${icon("file")}<span>导出 PDF</span>`;
+    exportBtn.addEventListener("click", () =>
+      void this.exportSummary(summary)
+    );
+
+    actions.append(copyBtn, exportBtn);
+    foot.append(tip, actions);
+    content.append(head, body, foot);
+
+    const close = this.openModal(content, "lg");
+    closeBtn.addEventListener("click", () => close());
+  }
+
+  private async exportSummary(summary = this.lastSummary) {
+    const path = this.activePath;
+    if (!path) return;
+    if (this.annotations.length === 0) {
+      this.toast("暂无批注可导出");
+      return;
+    }
+    const title = this.docTitle.textContent?.trim() || baseName(path);
+    try {
+      const file = await window.api.exportSummaryPdf(this.settings.dataDir, {
+        title,
+        documentPath: path,
+        annotations: this.annotations,
+        summary,
+      });
+      this.showExportResult(file);
+    } catch (err) {
+      this.toast(
+        `导出 PDF 失败：${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  private showExportResult(filePath: string) {
+    const content = document.createElement("div");
+    content.className = "modal-inner";
+    const head = document.createElement("div");
+    head.className = "modal-head";
+    const title = document.createElement("h3");
+    title.textContent = "导出成功";
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "mini-btn";
+    closeBtn.innerHTML = icon("x");
+    head.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "modal-body";
+    const desc = document.createElement("p");
+    desc.textContent = "总结 PDF 已保存到：";
+    const fileEl = document.createElement("code");
+    fileEl.className = "export-path";
+    fileEl.textContent = filePath;
+    body.append(desc, fileEl);
+
+    const foot = document.createElement("div");
+    foot.className = "modal-foot";
+    const tip = document.createElement("span");
+    tip.className = "foot-tip";
+    tip.textContent = "已保存到数据目录的 PDFs/ 文件夹";
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+    const reveal = document.createElement("button");
+    reveal.className = "ghost-btn";
+    reveal.textContent = "在文件夹中显示";
+    reveal.addEventListener("click", () =>
+      window.api.revealInFolder(filePath)
+    );
+    const ok = document.createElement("button");
+    ok.className = "primary-btn";
+    ok.textContent = "完成";
+    actions.append(reveal, ok);
+    foot.append(tip, actions);
+    content.append(head, body, foot);
+
+    const close = this.openModal(content);
+    ok.addEventListener("click", () => close());
+    closeBtn.addEventListener("click", () => close());
+  }
+
+  private async loadAnnotations(path: string) {
+    try {
+      const file = await window.api.loadAnnotations(
+        this.settings.dataDir,
+        path
+      );
+      if (this.activePath !== path) return;
+      this.annotations = file?.annotations ?? [];
+      this.annLoadedFor = path;
+    } catch (err) {
+      console.error("[MathMaster] failed to load annotations", err);
+      if (this.activePath !== path) return;
+      this.annotations = [];
+      this.annLoadedFor = path;
+    }
+    this.lastSummary = "";
+    this.renderAnnotations();
+    this.renderAnnList();
+  }
+
+  private scheduleAnnotationsSave() {
+    if (this.annLoadedFor !== this.activePath) return;
+    window.clearTimeout(this.annSaveTimer);
+    this.annSaveTimer = window.setTimeout(() => this.saveAnnotationsNow(), 300);
+  }
+
+  private saveAnnotationsNow() {
+    const path = this.activePath;
+    if (!path || this.annLoadedFor !== path) return;
+    const tab = this.tabs.find((t) => t.path === path);
+    const name = tab?.name || baseName(path);
+    window.clearTimeout(this.annSaveTimer);
+    void window.api
+      .saveAnnotations(this.settings.dataDir, path, name, this.annotations)
+      .catch((err) => {
+        console.error("[MathMaster] failed to save annotations", err);
+        this.toast("保存批注失败");
+      });
   }
 
   // ---------------- chat ----------------
@@ -894,6 +1541,7 @@ export class App {
     this.pageInput.value = "";
     this.taskStatus.textContent = "尚未打开文档";
     this.renderMarks();
+    this.renderAnnList();
   }
 
   private async activateTab(path: string) {
@@ -904,6 +1552,9 @@ export class App {
       const page = this.viewer.getCurrentPage();
       this.scheduleDocSave(page);
     }
+    if (this.annLoadedFor && this.annLoadedFor === this.activePath) {
+      this.saveAnnotationsNow();
+    }
 
     this.activePath = path;
     this.renderTabs();
@@ -913,6 +1564,12 @@ export class App {
     this.updateBookmarkButton();
 
     if (this.currentLoadedPath === path) return;
+
+    this.annotations = [];
+    this.annLoadedFor = null;
+    this.lastSummary = "";
+    this.renderAnnotations();
+    this.renderAnnList();
 
     const seq = ++this.loadSeq;
     this.showLoading();
@@ -942,6 +1599,7 @@ export class App {
     }
     if (seq !== this.loadSeq) return;
     this.currentLoadedPath = path;
+    await this.loadAnnotations(path);
     this.hideLoading();
     if (initial > 1) {
       this.toast(`已回到上次阅读的第 ${initial} 页`);
@@ -951,6 +1609,7 @@ export class App {
   private closeTab(path: string) {
     const idx = this.tabs.findIndex((t) => t.path === path);
     if (idx < 0) return;
+    if (this.annLoadedFor === path) this.saveAnnotationsNow();
     this.tabs.splice(idx, 1);
     const wasActive = this.activePath === path;
     if (wasActive) {
@@ -974,8 +1633,15 @@ export class App {
         });
         this.outline = [];
         this.tocEntries = [];
+        this.annotations = [];
+        this.annLoadedFor = null;
+        this.lastSummary = "";
+        this.annMode = false;
+        this.updateAnnotationModeUI();
+        this.renderAnnotations();
         this.showEmpty();
         this.renderToc();
+        this.renderAnnList();
       }
     }
   }
@@ -1157,6 +1823,27 @@ export class App {
           <label class="switch"><input type="checkbox" id="setBlur"> 背景模糊</label>
         </section>
         <section class="setting-group">
+          <h4>批注与数据存储</h4>
+          <div class="field">
+            <span>存储目录</span>
+            <input type="text" id="setDataDir" placeholder="默认：~/.MathMaster" value="${s.dataDir.replace(/"/g, "&quot;")}">
+            <button class="ghost-btn" id="setDataDirPick">${icon("folderOpen")}选择</button>
+          </div>
+          <p class="setting-tip">批注以 JSON 保存在 annotations/，AI 总结 PDF 保存在 PDFs/。留空则使用默认目录。</p>
+        </section>
+        <section class="setting-group">
+          <h4>DeepSeek AI 总结</h4>
+          <div class="field">
+            <span>API Key</span>
+            <input type="password" id="setDeepseekKey" placeholder="sk-..." value="${s.deepseek.apiKey.replace(/"/g, "&quot;")}">
+          </div>
+          <div class="field">
+            <span>模型</span>
+            <input type="text" id="setDeepseekModel" value="${s.deepseek.model.replace(/"/g, "&quot;")}">
+          </div>
+          <p class="setting-tip">用于将当前文档的批注发送到 DeepSeek 生成知识总结；密钥仅保存在本机。</p>
+        </section>
+        <section class="setting-group">
           <h4>AI 助手</h4>
           <div class="field">
             <span>服务</span>
@@ -1204,6 +1891,50 @@ export class App {
           syncThemeSeg();
         });
       });
+
+    const dataDir = q<HTMLInputElement>("#setDataDir");
+    void window.api.getDefaultDataDir().then((defaultDir) => {
+      dataDir.placeholder = `默认：${defaultDir}`;
+    });
+    const applyDataDir = () => {
+      if (this.annLoadedFor && this.annLoadedFor === this.activePath) {
+        this.saveAnnotationsNow();
+      }
+      this.settings.dataDir = dataDir.value.trim();
+      this.persistSettings();
+      void window.api
+        .ensureDataDir(this.settings.dataDir)
+        .then(() => {
+          this.toast("批注存储目录已更新");
+          if (this.activePath) void this.loadAnnotations(this.activePath);
+        })
+        .catch((err) => {
+          console.error("[MathMaster] invalid data dir", err);
+          this.toast("无法使用该目录，请重新选择");
+        });
+    };
+    dataDir.addEventListener("change", applyDataDir);
+    q("#setDataDirPick").addEventListener("click", async () => {
+      const picked = await window.api.pickDirectory(
+        dataDir.value.trim() || undefined
+      );
+      if (!picked) return;
+      dataDir.value = picked;
+      applyDataDir();
+    });
+
+    const dsKey = q<HTMLInputElement>("#setDeepseekKey");
+    dsKey.addEventListener("change", () => {
+      this.settings.deepseek.apiKey = dsKey.value.trim();
+      this.persistSettings();
+    });
+    const dsModel = q<HTMLInputElement>("#setDeepseekModel");
+    dsModel.addEventListener("change", () => {
+      this.settings.deepseek.model =
+        dsModel.value.trim() || "deepseek-chat";
+      dsModel.value = this.settings.deepseek.model;
+      this.persistSettings();
+    });
 
     const warm = q<HTMLInputElement>("#setWarm");
     warm.checked = s.warm;
@@ -1297,6 +2028,8 @@ export class App {
       this.layoutPanels();
       this.initChat();
       $<HTMLSelectElement>("chatProvider").value = this.settings.chat.provider;
+      void window.api.ensureDataDir(this.settings.dataDir);
+      if (this.activePath) void this.loadAnnotations(this.activePath);
       this.toast("已恢复默认设置");
       close();
     });
@@ -1447,6 +2180,8 @@ export class App {
           this.updateZoomLabel();
         } else if (e.key.toLowerCase() === "r") {
           this.rotateCurrentPage();
+        } else if (e.key.toLowerCase() === "a") {
+          this.toggleAnnotationMode();
         }
       }
     });
